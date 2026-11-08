@@ -1,9 +1,8 @@
 name: Build and publish macOS release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -64,14 +63,16 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent dist/APOST.app \
             "APOST-${VERSION}-macos-arm64.zip"
 
-      - name: Publish release assets
+      - name: Upload assets to the published release
         working-directory: build-source/APOST
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" \
+          gh release edit "$GITHUB_REF_NAME" \
+            --title "APOST $VERSION" \
+            --notes "macOS Apple Silicon installer. This build is not signed or notarized by Apple."
+          gh release upload "$GITHUB_REF_NAME" \
             "APOST-${VERSION}-macos-arm64.dmg#APOST macOS installer (Apple Silicon)" \
             "APOST-${VERSION}-macos-arm64.zip#APOST app bundle (Apple Silicon)" \
-            --title "APOST ${VERSION}" \
-            --notes "macOS Apple Silicon installer. This build is not signed or notarized by Apple."
+            --clobber
