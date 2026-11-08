@@ -1,0 +1,77 @@
+name: Build and publish macOS release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-latest
+    steps:
+      - name: Check out release repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Unpack APOST source
+        run: |
+          mkdir build-source
+          unzip -q apost-source-0.3.0.zip -d build-source
+
+      - name: Install build dependencies
+        working-directory: build-source/APOST
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt "pyinstaller>=6.11,<7"
+
+      - name: Build APOST application
+        working-directory: build-source/APOST
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="$VERSION" python - <<'PY'
+          import os
+          import pathlib
+          import re
+          path = pathlib.Path("core/config.py")
+          source = path.read_text()
+          source, count = re.subn(r"^APP_VERSION = .*", f'APP_VERSION = "{os.environ["VERSION"]}"', source, count=1, flags=re.M)
+          assert count == 1, "APP_VERSION was not updated"
+          path.write_text(source)
+          PY
+          python -m PyInstaller --noconfirm --clean --windowed --name APOST \
+            --osx-bundle-identifier com.maksimstahiv.apost \
+            --icon assets/icons/apost.icns \
+            --add-data 'assets:assets' --add-data 'localization:localization' \
+            --collect-all customtkinter --collect-all tkinterdnd2 \
+            --collect-all imageio_ffmpeg --hidden-import tzdata main.py
+
+      - name: Create installer disk image
+        working-directory: build-source/APOST
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dmg-root
+          cp -R dist/APOST.app dmg-root/APOST.app
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname APOST -srcfolder dmg-root -ov -format UDZO \
+            "APOST-${VERSION}-macos-arm64.dmg"
+          ditto -c -k --sequesterRsrc --keepParent dist/APOST.app \
+            "APOST-${VERSION}-macos-arm64.zip"
+
+      - name: Publish release assets
+        working-directory: build-source/APOST
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "APOST-${VERSION}-macos-arm64.dmg#APOST macOS installer (Apple Silicon)" \
+            "APOST-${VERSION}-macos-arm64.zip#APOST app bundle (Apple Silicon)" \
+            --title "APOST ${VERSION}" \
+            --notes "macOS Apple Silicon installer. This build is not signed or notarized by Apple."
